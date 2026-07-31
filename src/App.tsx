@@ -56,6 +56,7 @@ const categories: Category[] = [
 const difficulties: Difficulty[] = ['Facile', 'Moyen', 'Difficile', 'Expert']
 const phases: DuelPhase[] = ['Qualification', 'Demi-finale', 'Grande Finale']
 const avatars = ['😀', '😎', '🤓', '🧑‍💻', '🏆']
+const socketServerUrl = import.meta.env.VITE_SOCKET_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '')
 
 function shuffleArray<T>(array: T[]) {
   const result = [...array]
@@ -350,7 +351,7 @@ function App() {
 
   function getSocket() {
     if (!socketRef.current) {
-      socketRef.current = io(import.meta.env.VITE_SOCKET_URL ?? 'http://localhost:3001')
+      socketRef.current = io(socketServerUrl, { autoConnect: Boolean(socketServerUrl) })
       socketRef.current.on('game:state', (state: { teamCounts: Record<TeamKey, number>; teamRosters?: Record<TeamKey, Array<{ name: string; avatar: string; connected: boolean }>> }) => {
         setLobbyTeamCounts(state.teamCounts)
         if (state.teamRosters) setCreatedGame((game) => game ? { ...game, teamARoster: state.teamRosters!.A, teamBRoster: state.teamRosters!.B } : game)
@@ -463,6 +464,10 @@ function App() {
 
   function createDuel() {
     setJoinError('')
+    if (!socketServerUrl) {
+      setJoinError('Le serveur de salons n’est pas configuré. Ajoutez VITE_SOCKET_URL dans les variables Vercel.')
+      return
+    }
     const newSessionId = `SESSION-${crypto.randomUUID()}`
     setSessionId(newSessionId)
     const socket = getSocket()
@@ -486,8 +491,12 @@ function App() {
   }
 
   function joinDuel() {
-    const socket = getSocket()
     setJoinError('')
+    if (!socketServerUrl) {
+      setJoinError('Le serveur de salons n’est pas configuré. Ajoutez VITE_SOCKET_URL dans les variables Vercel.')
+      return
+    }
+    const socket = getSocket()
     socket.once('game:error', ({ message }: { message: string }) => setJoinError(message))
     socket.once('connect_error', () => setJoinError('Impossible de joindre le serveur de salons.'))
     socket.once('game:joined', ({ team, state, teamRoster, resumeToken }: { team: TeamKey; state: { teamNames: Record<TeamKey, string>; teamCounts: Record<TeamKey, number>; settings: { category: Category; difficulty: Difficulty; questionsCount: number; phase: DuelPhase }; teamRosters?: Record<TeamKey, Array<{ name: string; avatar: string; connected: boolean }>> }; teamRoster: Array<{ name: string; avatar: string; connected: boolean }>; resumeToken: string }) => {
@@ -991,6 +1000,7 @@ function App() {
         <section className="panel quiz-panel">
           <div className="quiz-header">
             <div>
+              <button className="text-btn" type="button" onClick={goHome}>← Quitter le quiz</button>
               <p className="eyebrow">Question {questionIndex + 1}/{questions.length}</p>
               <h2>{currentQuestion.question}</h2>
             </div>

@@ -25,6 +25,17 @@ npm run server
 
 Le serveur sépare `game:<id>` (état public), `game:<id>:team:A` et `game:<id>:team:B`. Les messages d’équipe sont émis exclusivement dans la room privée du joueur autorisé : aucun chat, brouillon de réponse ou choix stratégique ne doit être envoyé à la room publique.
 
+## Déploiement sur Vercel
+
+Vercel déploie l’interface Vite, mais le processus `server/index.ts` (Socket.io) doit être disponible sur une URL publique séparée, sauf si vous mettez en place Vercel Services avec un stockage partagé. Déployez ce serveur Node.js sur un hébergeur compatible avec les connexions persistantes, puis configurez les variables d’environnement :
+
+```text
+VITE_SOCKET_URL=https://votre-serveur-socket.example.com
+CLIENT_ORIGIN=https://votre-projet.vercel.app
+```
+
+Dans Vercel, ajoutez `VITE_SOCKET_URL` dans **Settings → Environment Variables**, puis redéployez le frontend. Configurez `CLIENT_ORIGIN` chez l’hébergeur du serveur Socket.io. Sans cette URL, l’application affiche explicitement que le serveur de salons n’est pas configuré.
+
 ## Modèle de base de données
 - Players : pseudo, avatar, session_id, created_at
 - Questions : question, options, bonne réponse, catégorie, difficulté, explication

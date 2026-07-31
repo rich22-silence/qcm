@@ -8,7 +8,10 @@ type Game = { id: string; hostId: string; codes: Record<Team, string>; players: 
 type Session = { gameId: string; team: Team } | undefined
 
 const httpServer = createServer()
-const io = new Server(httpServer, { cors: { origin: process.env.CLIENT_ORIGIN ?? 'http://localhost:5173' } })
+// En développement, Vite peut prendre un autre port si 5173 est déjà occupé.
+// En production, CLIENT_ORIGIN permet de restreindre explicitement les origines.
+const allowedOrigins = process.env.CLIENT_ORIGIN ? process.env.CLIENT_ORIGIN.split(',') : true
+const io = new Server(httpServer, { cors: { origin: allowedOrigins } })
 const games = new Map<string, Game>()
 const publicRoom = (gameId: string) => `game:${gameId}`
 const teamRoom = (gameId: string, team: Team) => `game:${gameId}:team:${team}`
