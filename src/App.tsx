@@ -290,7 +290,7 @@ function App() {
   const [gameMode, setGameMode] = useState<GameMode>('solo')
   const [playerName, setPlayerName] = useState('Koffi')
   const [avatar, setAvatar] = useState(avatars[0])
-  const [sessionId] = useState(() => `SESSION-${Math.floor(Math.random() * 9000 + 1000)}`)
+  const [sessionId, setSessionId] = useState(() => `SESSION-${Math.floor(Math.random() * 9000 + 1000)}`)
   const [soloConfig, setSoloConfig] = useState({ category: 'Culture générale' as Category, difficulty: 'Difficile' as Difficulty, questionsCount: 6 })
   const [duelConfig, setDuelConfig] = useState({
     teamAName: 'Equipe A',
@@ -440,6 +440,8 @@ function App() {
 
   function createDuel() {
     setJoinError('')
+    const newSessionId = `SESSION-${crypto.randomUUID()}`
+    setSessionId(newSessionId)
     const socket = getSocket()
     socket.once('game:error', ({ message }: { message: string }) => setJoinError(message))
     socket.once('game:created', ({ codes }: { codes: Record<TeamKey, string> }) => {
@@ -449,7 +451,7 @@ function App() {
     })
     socket.once('connect_error', () => setJoinError('Impossible de joindre le serveur de salons. Lancez « npm run server », puis réessayez.'))
     const createRoom = () => socket.emit('game:create', {
-      gameId: sessionId,
+      gameId: newSessionId,
       player: { name: playerName.trim() || 'Joueur 1', avatar },
       maxPlayers: duelConfig.maxPlayers,
       teamNames: { A: duelConfig.teamAName.trim() || 'Équipe A', B: duelConfig.teamBName.trim() || 'Équipe B' },
