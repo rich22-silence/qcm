@@ -55,7 +55,7 @@ const categories: Category[] = [
 
 const difficulties: Difficulty[] = ['Facile', 'Moyen', 'Difficile', 'Expert']
 const phases: DuelPhase[] = ['Qualification', 'Demi-finale', 'Grande Finale']
-const avatars = ['🧑‍🚀', '🎮', '🦊', '⚡', '👾', '🦁']
+const avatars = ['😀', '😎', '🤓', '🧑‍💻', '🏆']
 
 function shuffleArray<T>(array: T[]) {
   const result = [...array]
@@ -309,8 +309,8 @@ function App() {
     codeB: string
     teamAName: string
     teamBName: string
-    teamARoster: Array<{ name: string; avatar: string }>
-    teamBRoster: Array<{ name: string; avatar: string }>
+    teamARoster: Array<{ name: string; avatar: string; connected?: boolean }>
+    teamBRoster: Array<{ name: string; avatar: string; connected?: boolean }>
     phase: DuelPhase
   } | null>(null)
   const [questions, setQuestions] = useState<Question[]>([])
@@ -339,9 +339,11 @@ function App() {
   const [reboundDecisionTime, setReboundDecisionTime] = useState(10)
   const [isLobbyHost, setIsLobbyHost] = useState(false)
   const [lobbyCountdown, setLobbyCountdown] = useState<number | null>(null)
+  const [lobbyNotice, setLobbyNotice] = useState('🟢 En attente des joueurs')
   const [inviteCodesVisible, setInviteCodesVisible] = useState(false)
   const [lobbyTeamCounts, setLobbyTeamCounts] = useState<Record<TeamKey, number>>({ A: 0, B: 0 })
   const socketRef = useRef<Socket | null>(null)
+  const resumeTokenRef = useRef<string | null>(sessionStorage.getItem('quiz-arena-resume-token'))
 
   const currentQuestion = questions[questionIndex]
   const progress = questions.length > 0 ? ((questionIndex + 1) / questions.length) * 100 : 0
@@ -350,6 +352,35 @@ function App() {
     if (!socketRef.current) {
       socketRef.current = io(import.meta.env.VITE_SOCKET_URL ?? 'http://localhost:3001')
       socketRef.current.on('game:state', (state: { teamCounts: Record<TeamKey, number> }) => setLobbyTeamCounts(state.teamCounts))
+      socketRef.current.on('team:roster', ({ team, players }: { team: TeamKey; players: Array<{ name: string; avatar: string; connected: boolean }> }) => {
+        setCreatedGame((game) => game ? {
+          ...game,
+          teamARoster: team === 'A' ? players : game.teamARoster,
+          teamBRoster: team === 'B' ? players : game.teamBRoster,
+        } : game)
+      })
+      socketRef.current.on('team:chat', ({ team, author, text, at }: { team: TeamKey; author: string; text: string; at: number }) => {
+        const message = { id: at, author, text }
+        if (team === 'A') setTeamAChat((messages) => [...messages, message])
+        else setTeamBChat((messages) => [...messages, message])
+      })
+      socketRef.current.on('game:started', ({ settings }: { settings: { category: Category; difficulty: Difficulty; questionsCount: number; phase: DuelPhase } }) => {
+        startDuelQuiz(settings)
+      })
+      socketRef.current.on('game:countdown', ({ value }: { value: number }) => setLobbyCountdown(value))
+      socketRef.current.on('lobby:notice', ({ message }: { message: string }) => setLobbyNotice(message))
+      socketRef.current.on('game:closed', ({ message }: { message: string }) => {
+        resumeTokenRef.current = null; sessionStorage.removeItem('quiz-arena-resume-token')
+        setCreatedGame(null); setJoinedTeam(null); setIsLobbyHost(false); setJoinError(message); setScreen('home')
+      })
+      socketRef.current.on('connect', () => {
+        if (resumeTokenRef.current) socketRef.current?.emit('game:resume', { resumeToken: resumeTokenRef.current })
+      })
+      socketRef.current.on('game:resumed', ({ team, state, teamRoster, code, isHost }: { team: TeamKey; state: { teamNames: Record<TeamKey, string>; teamCounts: Record<TeamKey, number>; settings: { category: Category; difficulty: Difficulty; questionsCount: number; phase: DuelPhase } }; teamRoster: Array<{ name: string; avatar: string; connected: boolean }>; code: string; isHost: boolean }) => {
+        setCreatedGame({ codeA: team === 'A' ? code : '', codeB: team === 'B' ? code : '', teamAName: state.teamNames.A, teamBName: state.teamNames.B, teamARoster: team === 'A' ? teamRoster : [], teamBRoster: team === 'B' ? teamRoster : [], phase: state.settings.phase })
+        setDuelConfig((config) => ({ ...config, ...state.settings, teamAName: state.teamNames.A, teamBName: state.teamNames.B }))
+        setLobbyTeamCounts(state.teamCounts); setJoinedTeam(team); setIsLobbyHost(isHost); setGameMode('duel'); setScreen('waiting')
+      })
     }
     return socketRef.current
   }
@@ -390,19 +421,6 @@ function App() {
     return () => window.clearTimeout(timeout)
   }, [reboundDecisionPending, reboundDecisionTime])
 
-  useEffect(() => {
-    if (lobbyCountdown === null) return
-    const timeout = window.setTimeout(() => {
-      if (lobbyCountdown <= 1) {
-        setLobbyCountdown(null)
-        startDuelQuiz()
-        return
-      }
-      setLobbyCountdown((count) => count === null ? null : count - 1)
-    }, 1000)
-    return () => window.clearTimeout(timeout)
-  }, [lobbyCountdown])
-
   function resetQuizState() {
     setQuestions([])
     setQuestionIndex(0)
@@ -428,6 +446,8 @@ function App() {
     setDuelPhase('Qualification')
     setReboundDecisionPending(false)
     setReboundDecisionTime(10)
+    setLobbyCountdown(null)
+    setLobbyNotice('🟢 En attente des joueurs')
   }
 
   function startSoloQuiz() {
@@ -444,7 +464,8 @@ function App() {
     setSessionId(newSessionId)
     const socket = getSocket()
     socket.once('game:error', ({ message }: { message: string }) => setJoinError(message))
-    socket.once('game:created', ({ codes }: { codes: Record<TeamKey, string> }) => {
+    socket.once('game:created', ({ codes, resumeToken }: { codes: Record<TeamKey, string>; resumeToken: string }) => {
+      resumeTokenRef.current = resumeToken; sessionStorage.setItem('quiz-arena-resume-token', resumeToken)
       setCreatedGame({ codeA: codes.A, codeB: codes.B, teamAName: duelConfig.teamAName, teamBName: duelConfig.teamBName, teamARoster: [{ name: playerName, avatar }], teamBRoster: [], phase: duelConfig.phase })
       setLobbyTeamCounts({ A: 1, B: 0 })
       setDuelPhase(duelConfig.phase); setJoinedTeam('A'); setIsLobbyHost(true); setInviteCodesVisible(true); setGameMode('duel'); setScreen('waiting')
@@ -455,6 +476,7 @@ function App() {
       player: { name: playerName.trim() || 'Joueur 1', avatar },
       maxPlayers: duelConfig.maxPlayers,
       teamNames: { A: duelConfig.teamAName.trim() || 'Équipe A', B: duelConfig.teamBName.trim() || 'Équipe B' },
+      settings: { category: duelConfig.category, difficulty: duelConfig.difficulty, questionsCount: duelConfig.questionsCount, phase: duelConfig.phase },
     })
     if (socket.connected) createRoom()
     else socket.once('connect', createRoom)
@@ -464,19 +486,22 @@ function App() {
     const socket = getSocket()
     setJoinError('')
     socket.once('game:error', ({ message }: { message: string }) => setJoinError(message))
-    socket.once('game:joined', ({ team, state, teamRoster }: { team: TeamKey; state: { teamNames: Record<TeamKey, string>; teamCounts: Record<TeamKey, number> }; teamRoster: Array<{ name: string; avatar: string }> }) => {
+    socket.once('connect_error', () => setJoinError('Impossible de joindre le serveur de salons.'))
+    socket.once('game:joined', ({ team, state, teamRoster, resumeToken }: { team: TeamKey; state: { teamNames: Record<TeamKey, string>; teamCounts: Record<TeamKey, number>; settings: { category: Category; difficulty: Difficulty; questionsCount: number; phase: DuelPhase } }; teamRoster: Array<{ name: string; avatar: string; connected: boolean }>; resumeToken: string }) => {
+      resumeTokenRef.current = resumeToken; sessionStorage.setItem('quiz-arena-resume-token', resumeToken)
       setCreatedGame({ codeA: team === 'A' ? joinCode : '', codeB: team === 'B' ? joinCode : '', teamAName: state.teamNames.A, teamBName: state.teamNames.B, teamARoster: team === 'A' ? teamRoster : [], teamBRoster: team === 'B' ? teamRoster : [], phase: 'Qualification' })
-      setLobbyTeamCounts(state.teamCounts); setJoinedTeam(team); setIsLobbyHost(false); setInviteCodesVisible(false); setGameMode('duel'); setScreen('waiting')
+      setDuelConfig((config) => ({ ...config, ...state.settings, teamAName: state.teamNames.A, teamBName: state.teamNames.B }))
+      setDuelPhase(state.settings.phase); setLobbyTeamCounts(state.teamCounts); setJoinedTeam(team); setIsLobbyHost(false); setInviteCodesVisible(false); setGameMode('duel'); setScreen('waiting')
     })
     socket.emit('game:join', { code: joinCode.trim().toUpperCase(), player: { name: playerName, avatar } })
   }
 
-  function startDuelQuiz() {
+  function startDuelQuiz(config: Pick<typeof duelConfig, 'category' | 'difficulty' | 'questionsCount' | 'phase'> = duelConfig) {
     resetQuizState()
-    const generatedQuestions = buildQuestions(duelConfig.category, duelConfig.difficulty, duelConfig.questionsCount)
+    const generatedQuestions = buildQuestions(config.category, config.difficulty, config.questionsCount)
     setQuestions(generatedQuestions)
     setGameMode('duel')
-    setDuelPhase(duelConfig.phase)
+    setDuelPhase(config.phase)
     setScreen('quiz')
   }
 
@@ -484,7 +509,7 @@ function App() {
     if (!createdGame || !isLobbyHost || lobbyTeamCounts.A === 0 || lobbyTeamCounts.B === 0) {
       return
     }
-    setLobbyCountdown(3)
+    getSocket().emit('game:start')
   }
 
   function nextQuestion() {
@@ -662,19 +687,24 @@ function App() {
     if (!input.trim()) {
       return
     }
-
-    if (team === 'A') {
-      setTeamAChat((prev) => [...prev, { id: Date.now(), author: playerName, text: input.trim() }])
-      setTeamAInput('')
-    } else {
-      setTeamBChat((prev) => [...prev, { id: Date.now(), author: playerName, text: input.trim() }])
-      setTeamBInput('')
-    }
+    if (team !== joinedTeam) return
+    getSocket().emit('team:chat', { text: input.trim() })
+    if (team === 'A') setTeamAInput('')
+    else setTeamBInput('')
   }
 
   function goHome() {
     resetQuizState()
     setScreen('home')
+  }
+
+  function leaveLobby() {
+    if (screen === 'waiting') getSocket().emit('game:leave')
+    resumeTokenRef.current = null; sessionStorage.removeItem('quiz-arena-resume-token')
+    setCreatedGame(null)
+    setJoinedTeam(null)
+    setIsLobbyHost(false)
+    goHome()
   }
 
   const correctCount = answers.filter((answer) => answer.isCorrect).length
@@ -891,7 +921,7 @@ function App() {
         <section className="panel form-panel">
           <div className="panel-header">
             <button className="text-btn" type="button" onClick={goHome}>← Retour</button>
-            <h2>Rejoindre une équipe</h2>
+            <div><p className="eyebrow">🔑 Accès privé par invitation</p><h2>Rejoindre une Arena</h2></div>
           </div>
 
           <div className="form-grid">
@@ -910,8 +940,8 @@ function App() {
               </div>
             </label>
             <label>
-              Code de l’équipe
-              <input value={joinCode} onChange={(event) => setJoinCode(event.target.value.toUpperCase())} placeholder="TEAM-A-4582" />
+              Code d’équipe
+              <input value={joinCode} onChange={(event) => setJoinCode(event.target.value.toUpperCase())} placeholder="TEAM-A-482951" autoComplete="off" />
             </label>
           </div>
 
@@ -923,7 +953,7 @@ function App() {
       {screen === 'waiting' && createdGame && (
         <section className="lobby-shell">
           <div className="panel-header">
-            <button className="text-btn" type="button" onClick={goHome}>← Retour</button>
+            <button className="text-btn" type="button" onClick={leaveLobby}>← Quitter le salon</button>
             <div><p className="eyebrow">Lobby sécurisé · {sessionId}</p><h2>Salle d’attente de l’Arena</h2></div>
             <span className="lobby-live">● Temps réel connecté</span>
           </div>
@@ -933,7 +963,7 @@ function App() {
               <div className="lobby-team-title"><span className={joinedTeam === 'A' ? 'team-dot blue' : 'team-dot red'} /> <div><p>Canal privé</p><h3>{joinedTeam === 'A' ? createdGame.teamAName : createdGame.teamBName}</h3></div></div>
               <p className="lobby-member-count">{joinedTeam === 'A' ? teamMembersA.length : teamMembersB.length} joueur(s) connecté(s)</p>
               <div className="lobby-roster">
-                {(joinedTeam === 'A' ? teamMembersA : teamMembersB).map((player, index) => <div className="lobby-player" key={`${player.name}-${index}`}><span className="lobby-avatar">{player.avatar}</span><div><strong>{player.name}</strong><small>🟢 Connecté · {isLobbyHost && index === 0 ? 'Créateur · Capitaine' : index === 0 ? 'Capitaine temporaire' : 'Membre'}</small></div><span className="ready-badge">Prêt</span></div>)}
+                {(joinedTeam === 'A' ? teamMembersA : teamMembersB).map((player, index) => <div className="lobby-player" key={`${player.name}-${index}`}><span className="lobby-avatar">{player.avatar}</span><div><strong>{player.name}</strong><small>{player.connected === false ? '🟡 En attente de reconnexion' : `🟢 Connecté · ${isLobbyHost && index === 0 ? 'Organisateur' : 'Membre'}`}</small></div><span className="ready-badge">{player.connected === false ? 'Absent' : 'Prêt'}</span></div>)}
                 {(joinedTeam === 'A' ? teamMembersA : teamMembersB).length === 0 && <p className="empty-roster">En attente de joueurs…</p>}
               </div>
               <div className="lobby-invite"><span>Code d’invitation privé</span><strong>{joinedTeam === 'A' ? createdGame.codeA : createdGame.codeB}</strong><button className="text-btn" type="button" onClick={() => navigator.clipboard.writeText(joinedTeam === 'A' ? createdGame.codeA : createdGame.codeB)}>Copier le code</button></div>
@@ -943,7 +973,7 @@ function App() {
             <div className="lobby-public-card">
               <p className="eyebrow">Match à venir</p><h3>{createdGame.teamAName} <span>VS</span> {createdGame.teamBName}</h3>
               <div className="lobby-versus"><div className="team-emblem team-a">A</div><div className="vs-pulse">VS</div><div className="team-emblem team-b">B</div></div>
-              <p className="lobby-total">{lobbyTeamCounts.A + lobbyTeamCounts.B} joueurs connectés au total</p>
+              <p className="lobby-total">{lobbyTeamCounts.A + lobbyTeamCounts.B} joueurs connectés au total · {lobbyNotice}</p>
               <div className="match-settings"><span>📚 {duelConfig.category}</span><span>◈ {duelConfig.difficulty}</span><span>◉ {duelConfig.questionsCount} questions</span><span>◷ 30 secondes</span></div>
               {isLobbyHost ? <div className="host-start"><p>{lobbyTeamCounts.A > 0 && lobbyTeamCounts.B > 0 ? 'Les deux équipes sont prêtes.' : 'Une présence est requise dans chaque équipe.'}</p><button type="button" className="text-btn lobby-codes-trigger" onClick={() => setInviteCodesVisible(true)}>Voir les codes d’invitation</button><button type="button" className="btn btn-primary" disabled={lobbyCountdown !== null || lobbyTeamCounts.A === 0 || lobbyTeamCounts.B === 0} onClick={requestDuelStart}>Commencer la partie</button></div> : <div className="host-start"><p>Seul le créateur peut lancer le match.</p><span className="ready-badge">En attente de l’organisateur</span></div>}
             </div>
