@@ -12,8 +12,8 @@ const io = new Server(httpServer, { cors: { origin: process.env.CLIENT_ORIGIN ??
 const games = new Map<string, Game>()
 const publicRoom = (gameId: string) => `game:${gameId}`
 const teamRoom = (gameId: string, team: Team) => `game:${gameId}:team:${team}`
-const publicState = (game: Game) => ({ id: game.id, scores: game.scores, activeTeam: game.activeTeam, phase: game.phase, teamNames: game.teamNames, settings: game.settings, teamCounts: { A: game.players.filter((player) => player.team === 'A' && player.connected).length, B: game.players.filter((player) => player.team === 'B' && player.connected).length } })
 const roster = (game: Game, team: Team) => game.players.filter((player) => player.team === team).map(({ name, avatar, connected }) => ({ name, avatar, connected }))
+const publicState = (game: Game) => ({ id: game.id, scores: game.scores, activeTeam: game.activeTeam, phase: game.phase, teamNames: game.teamNames, settings: game.settings, teamCounts: { A: game.players.filter((player) => player.team === 'A' && player.connected).length, B: game.players.filter((player) => player.team === 'B' && player.connected).length }, teamRosters: { A: roster(game, 'A'), B: roster(game, 'B') } })
 const broadcastRosters = (game: Game) => {
   io.to(teamRoom(game.id, 'A')).emit('team:roster', { team: 'A', players: roster(game, 'A') })
   io.to(teamRoom(game.id, 'B')).emit('team:roster', { team: 'B', players: roster(game, 'B') })

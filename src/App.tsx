@@ -351,7 +351,10 @@ function App() {
   function getSocket() {
     if (!socketRef.current) {
       socketRef.current = io(import.meta.env.VITE_SOCKET_URL ?? 'http://localhost:3001')
-      socketRef.current.on('game:state', (state: { teamCounts: Record<TeamKey, number> }) => setLobbyTeamCounts(state.teamCounts))
+      socketRef.current.on('game:state', (state: { teamCounts: Record<TeamKey, number>; teamRosters?: Record<TeamKey, Array<{ name: string; avatar: string; connected: boolean }>> }) => {
+        setLobbyTeamCounts(state.teamCounts)
+        if (state.teamRosters) setCreatedGame((game) => game ? { ...game, teamARoster: state.teamRosters!.A, teamBRoster: state.teamRosters!.B } : game)
+      })
       socketRef.current.on('team:roster', ({ team, players }: { team: TeamKey; players: Array<{ name: string; avatar: string; connected: boolean }> }) => {
         setCreatedGame((game) => game ? {
           ...game,
@@ -464,9 +467,9 @@ function App() {
     setSessionId(newSessionId)
     const socket = getSocket()
     socket.once('game:error', ({ message }: { message: string }) => setJoinError(message))
-    socket.once('game:created', ({ codes, resumeToken }: { codes: Record<TeamKey, string>; resumeToken: string }) => {
+    socket.once('game:created', ({ codes, resumeToken, state }: { codes: Record<TeamKey, string>; resumeToken: string; state: { teamRosters: Record<TeamKey, Array<{ name: string; avatar: string; connected: boolean }>> } }) => {
       resumeTokenRef.current = resumeToken; sessionStorage.setItem('quiz-arena-resume-token', resumeToken)
-      setCreatedGame({ codeA: codes.A, codeB: codes.B, teamAName: duelConfig.teamAName, teamBName: duelConfig.teamBName, teamARoster: [{ name: playerName, avatar }], teamBRoster: [], phase: duelConfig.phase })
+      setCreatedGame({ codeA: codes.A, codeB: codes.B, teamAName: duelConfig.teamAName, teamBName: duelConfig.teamBName, teamARoster: state.teamRosters.A, teamBRoster: state.teamRosters.B, phase: duelConfig.phase })
       setLobbyTeamCounts({ A: 1, B: 0 })
       setDuelPhase(duelConfig.phase); setJoinedTeam('A'); setIsLobbyHost(true); setInviteCodesVisible(true); setGameMode('duel'); setScreen('waiting')
     })
@@ -487,9 +490,9 @@ function App() {
     setJoinError('')
     socket.once('game:error', ({ message }: { message: string }) => setJoinError(message))
     socket.once('connect_error', () => setJoinError('Impossible de joindre le serveur de salons.'))
-    socket.once('game:joined', ({ team, state, teamRoster, resumeToken }: { team: TeamKey; state: { teamNames: Record<TeamKey, string>; teamCounts: Record<TeamKey, number>; settings: { category: Category; difficulty: Difficulty; questionsCount: number; phase: DuelPhase } }; teamRoster: Array<{ name: string; avatar: string; connected: boolean }>; resumeToken: string }) => {
+    socket.once('game:joined', ({ team, state, teamRoster, resumeToken }: { team: TeamKey; state: { teamNames: Record<TeamKey, string>; teamCounts: Record<TeamKey, number>; settings: { category: Category; difficulty: Difficulty; questionsCount: number; phase: DuelPhase }; teamRosters?: Record<TeamKey, Array<{ name: string; avatar: string; connected: boolean }>> }; teamRoster: Array<{ name: string; avatar: string; connected: boolean }>; resumeToken: string }) => {
       resumeTokenRef.current = resumeToken; sessionStorage.setItem('quiz-arena-resume-token', resumeToken)
-      setCreatedGame({ codeA: team === 'A' ? joinCode : '', codeB: team === 'B' ? joinCode : '', teamAName: state.teamNames.A, teamBName: state.teamNames.B, teamARoster: team === 'A' ? teamRoster : [], teamBRoster: team === 'B' ? teamRoster : [], phase: 'Qualification' })
+      setCreatedGame({ codeA: team === 'A' ? joinCode : '', codeB: team === 'B' ? joinCode : '', teamAName: state.teamNames.A, teamBName: state.teamNames.B, teamARoster: state.teamRosters?.A ?? (team === 'A' ? teamRoster : []), teamBRoster: state.teamRosters?.B ?? (team === 'B' ? teamRoster : []), phase: 'Qualification' })
       setDuelConfig((config) => ({ ...config, ...state.settings, teamAName: state.teamNames.A, teamBName: state.teamNames.B }))
       setDuelPhase(state.settings.phase); setLobbyTeamCounts(state.teamCounts); setJoinedTeam(team); setIsLobbyHost(false); setInviteCodesVisible(false); setGameMode('duel'); setScreen('waiting')
     })
@@ -977,7 +980,7 @@ function App() {
               <div className="match-settings"><span>📚 {duelConfig.category}</span><span>◈ {duelConfig.difficulty}</span><span>◉ {duelConfig.questionsCount} questions</span><span>◷ 30 secondes</span></div>
               {isLobbyHost ? <div className="host-start"><p>{lobbyTeamCounts.A > 0 && lobbyTeamCounts.B > 0 ? 'Les deux équipes sont prêtes.' : 'Une présence est requise dans chaque équipe.'}</p><button type="button" className="text-btn lobby-codes-trigger" onClick={() => setInviteCodesVisible(true)}>Voir les codes d’invitation</button><button type="button" className="btn btn-primary" disabled={lobbyCountdown !== null || lobbyTeamCounts.A === 0 || lobbyTeamCounts.B === 0} onClick={requestDuelStart}>Commencer la partie</button></div> : <div className="host-start"><p>Seul le créateur peut lancer le match.</p><span className="ready-badge">En attente de l’organisateur</span></div>}
             </div>
-            <aside className="lobby-opponent-card"><span>🔒</span><strong>{joinedTeam === 'A' ? createdGame.teamBName : createdGame.teamAName} se prépare…</strong><p>Les joueurs, messages et choix de l’équipe adverse sont confidentiels.</p><div className="opponent-online">● Équipe connectée</div></aside>
+            <aside className="lobby-opponent-card"><span>👥</span><strong>{joinedTeam === 'A' ? createdGame.teamBName : createdGame.teamAName}</strong><p>Joueurs de l’équipe adverse — discussions privées masquées.</p><div className="lobby-roster">{(joinedTeam === 'A' ? teamMembersB : teamMembersA).map((player, index) => <div className="lobby-player" key={`${player.name}-${index}`}><span className="lobby-avatar">{player.avatar}</span><div><strong>{player.name}</strong><small>{player.connected === false ? '🟡 En attente de reconnexion' : '🟢 Connecté'}</small></div></div>)}{(joinedTeam === 'A' ? teamMembersB : teamMembersA).length === 0 && <p className="empty-roster">En attente de joueurs…</p>}</div><div className="opponent-online">● {joinedTeam === 'A' ? lobbyTeamCounts.B : lobbyTeamCounts.A} joueur(s) connecté(s)</div></aside>
           </div>
           {lobbyCountdown !== null && <motion.div className="lobby-countdown" initial={{ opacity: 0 }} animate={{ opacity: 1 }}><p>La partie commence</p><strong key={lobbyCountdown}>{lobbyCountdown || 'GO!'}</strong></motion.div>}
           {inviteCodesVisible && isLobbyHost && <motion.div className="invite-codes-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} role="dialog" aria-modal="true" aria-label="Codes privés de la partie"><motion.div className="invite-codes-modal" initial={{ scale: .95, y: 12 }} animate={{ scale: 1, y: 0 }}><div className="invite-modal-head"><div><p className="eyebrow">Organisateur uniquement</p><h3>Partie créée avec succès</h3></div><button type="button" className="text-btn" onClick={() => setInviteCodesVisible(false)}>Fermer</button></div><p className="invite-modal-copy">Transmettez chaque code uniquement aux joueurs de l’équipe concernée.</p><div className="invite-code-card team-a-code"><span>Salle {createdGame.teamAName}</span><strong>{createdGame.codeA}</strong><button className="btn btn-secondary" type="button" onClick={() => navigator.clipboard.writeText(createdGame.codeA)}>Copier le code A</button></div><div className="invite-code-card team-b-code"><span>Salle {createdGame.teamBName}</span><strong>{createdGame.codeB}</strong><button className="btn btn-secondary" type="button" onClick={() => navigator.clipboard.writeText(createdGame.codeB)}>Copier le code B</button></div></motion.div></motion.div>}
